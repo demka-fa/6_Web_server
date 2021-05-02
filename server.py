@@ -1,33 +1,34 @@
+import argparse
 import mimetypes
 import os
 import socket
 
 
-class BrowserRequest():
+class BrowserRequest:
+    """Экземпляр запроса браузера"""
 
     def __init__(self, data: bytes):
-        lines = [d.strip() for d in data.decode('utf8','replace').split("\n") if d.strip()]
+        lines = [
+            d.strip() for d in data.decode("utf8", "replace").split("\n") if d.strip()
+        ]
 
-        # First line takes the form of
-        # GET /file/path/ HTTP/1.1
         self.method, self.path, self.http_version = lines.pop(0).split(" ")
-        self.info = {k: v for k, v in (l.split(': ') for l in lines)}
+        self.info = {k: v for k, v in (l.split(": ") for l in lines)}
 
     def __repr__(self) -> str:
-        return "<BrowserRequest {method} {path} {http_version}>".format(
-            method=self.method, path=self.path, http_version=self.http_version)
+        return f"<BrowserRequest {self.method} {self.path} {self.http_version}>"
 
     def __getattr__(self, name: str):
         try:
-            return self.info["-".join([n.capitalize() for n in name.split('_')])]
+            return self.info["-".join([n.capitalize() for n in name.split("_")])]
         except IndexError:
             raise AttributeError(name)
 
 
-class ServerSocket():
-    """Simplified interface for interacting with a web server socket"""
+class ServerSocket:
+    """Класс для работы с сокетов"""
 
-    def __init__(self, host='', port=80, buffer_size=1024, max_queued_connections=5):
+    def __init__(self, host="", port=80, buffer_size=1024, max_queued_connections=5):
         self._connection = None
         self._socket = None
         self.host = host
@@ -36,9 +37,8 @@ class ServerSocket():
         self.max_queued_connections = max_queued_connections
 
     def __repr__(self) -> str:
-        status = 'closed' if self._socket is None else 'open'
-        return "<{status} ServerSocket {host}:{port}>".format(
-            status=status, host=self.host, port=self.port)
+        status = "closed" if self._socket is None else "open"
+        return f"<{status} ServerSocket {self.host}:{self.port}>"
 
     def __enter__(self):
         self.open()
@@ -80,23 +80,23 @@ class ServerSocket():
         self._connection.close()
 
 
-class SimpleServer():
-    """A Simple webserver implemented in Python. NOT FOR PRODUCTION USE"""
+class SimpleServer:
+    """Класс сервера"""
 
     STATUSES = {
-        200: 'Ok',
-        404: 'File not found',
+        200: "Ok",
+        404: "File not found",
     }
-    response_404 = '<html><h1>404 File Not Found</h1></html>'
+    response_404 = "<html><h1>404 File Not Found</h1></html>"
     log_format = "{status_code} - {method} {path} {user_agent}"
 
     def __init__(self, port=80, homedir=os.path.curdir, page404=None):
         """
-        Initialize a webserver
+        Инициализирует сервер
 
-        port    -- port to server requests from
-        homedir -- path to serve files out of
-        page404 -- optional path to HTML file for 404 errors
+        port    -- порт, на котором разворачивается
+        homedir -- домашняя директория
+        page404 -- страница, если ресурс не найден
         """
         self.socket = ServerSocket(port=port)
         self.homedir = os.path.abspath(homedir)
@@ -109,8 +109,9 @@ class SimpleServer():
 
     def serve(self):
         self.socket.open()
-        self.log('Opening socket connection {}:{} in {}'.format(
-            self.socket.host, self.socket.port, self.homedir))
+        self.log(
+            f"Opening socket connection {self.socket.host}:{self.socket.port} in {self.homedir}"
+        )
         while True:
             self.serve_request()
 
@@ -123,38 +124,43 @@ class SimpleServer():
         try:
             body, status_code = self.load_file(path)
         except IsADirectoryError:
-            path = os.path.join(path, 'index.html')
+            path = os.path.join(path, "index.html")
             body, status_code = self.load_file(path)
 
         header = self.get_header(status_code, path)
         self.socket.respond((header + body).encode())
-        self.log(self.log_format.format(status_code=status_code,
-                                        method=request.method,
-                                        path=request.path,
-                                        user_agent=request.user_agent))
+        self.log(
+            self.log_format.format(
+                status_code=status_code,
+                method=request.method,
+                path=request.path,
+                user_agent=request.user_agent,
+            )
+        )
 
     def get_header(self, status_code: int, path: str):
         _, file_ext = os.path.splitext(path)
-        return "\n".join([
-            "HTTP/1.1 {} {}".format(status_code, self.STATUSES[status_code]),
-            "Content-Type: {}".format(mimetypes.types_map.get(file_ext, 'application/octet-stream')),
-            "Server: SimplePython Server"
-            "\n\n"
-        ])
+        return "\n".join(
+            [
+                f"HTTP/1.1 {status_code} {self.STATUSES[status_code]}",
+                f"Content-Type: {mimetypes.types_map.get(file_ext, 'application/octet-stream')}",
+                "Server: SimplePython Server" "\n\n",
+            ]
+        )
 
-    def load_file(self, path):        
+    def load_file(self, path):
         try:
-            with open(os.path.join(self.homedir, path.lstrip('/'))) as f:
+            with open(os.path.join(self.homedir, path.lstrip("/"))) as f:
                 return f.read(), 200
         except FileNotFoundError:
             return self.response_404, 404
 
 
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description='Runs a simple Python server. Not for production')
-    parser.add_argument('port', type=int, help='port to run the server on')
+def main():
+    parser = argparse.ArgumentParser(
+        description="Runs a simple Python server. Not for production"
+    )
+    parser.add_argument("port", type=int, help="port to run the server on")
     args = parser.parse_args()
     server = SimpleServer(args.port)
     try:
@@ -163,3 +169,7 @@ if __name__ == "__main__":
         os._exit(0)
     finally:
         server.stop()
+
+
+if __name__ == "__main__":
+    main()
