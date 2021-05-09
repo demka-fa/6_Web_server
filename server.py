@@ -1,19 +1,26 @@
-import argparse
+# TODO Переделать логирование
 import mimetypes
 import os
 import socket
+import random
+from validator import port_validation, check_port_open
+
+DEFAULT_PORT = 80
 
 
 class BrowserRequest:
     """Экземпляр запроса браузера"""
 
     def __init__(self, data: bytes):
-        lines = [
-            d.strip() for d in data.decode("utf8", "replace").split("\n") if d.strip()
-        ]
+        lines = []
+        # Удаляем все пробелы с запроса браузера
+        for d in data.decode("utf8", "replace").split("\n"):
+            line = d.strip()
+            if line:
+                lines.append(line)
 
         self.method, self.path, self.http_version = lines.pop(0).split(" ")
-        self.info = {k: v for k, v in (l.split(": ") for l in lines)}
+        self.info = {k: v for k, v in (line.split(": ") for line in lines)}
 
     def __repr__(self) -> str:
         return f"<BrowserRequest {self.method} {self.path} {self.http_version}>"
@@ -25,8 +32,8 @@ class BrowserRequest:
             raise AttributeError(name)
 
 
-class ServerSocket:
-    """Класс для работы с сокетов"""
+class LocaleSocket:
+    """Класс для работы с сокетами"""
 
     def __init__(self, host="", port=80, buffer_size=1024, max_queued_connections=5):
         self._connection = None
@@ -48,19 +55,19 @@ class ServerSocket:
         self.close()
 
     def open(self):
-        assert self._socket is None, "ServerSocket is already open"
+        assert self._socket is None, "ServerSocket уже открыт"
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             self._socket.bind((self.host, self.port))
-        except:
+        except Exception:
             self.close()
             raise
         else:
             self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     def close(self):
-        assert self._socket is not None, "ServerSocker is already closed"
+        assert self._socket is not None, "Данный ServerSocket уже был закрыт"
         if self._connection:
             self._connection.close()
             self._connection = None
@@ -68,19 +75,21 @@ class ServerSocket:
         self._socket = None
 
     def listen(self) -> BrowserRequest:
-        assert self._socket is not None, "ServerSocker must be open to listen data"
+        assert (
+            self._socket is not None
+        ), "ServerSocket должен быть открыт для получения данных"
         self._socket.listen(self.max_queued_connections)
         self._connection, _ = self._socket.accept()
         data = self._connection.recv(self.buffer_size)
         return BrowserRequest(data)
 
     def respond(self, data: bytes):
-        assert self._socket is not None, "ServerSocker must be open to respond"
+        assert self._socket is not None, "ServerSocket должен быть открыт для ответа"
         self._connection.send(data)
         self._connection.close()
 
 
-class SimpleServer:
+class WebServer:
     """Класс сервера"""
 
     STATUSES = {
@@ -98,8 +107,9 @@ class SimpleServer:
         homedir -- домашняя директория
         page404 -- страница, если ресурс не найден
         """
-        self.socket = ServerSocket(port=port)
+        self.socket = LocaleSocket(port=port)
         self.homedir = os.path.abspath(homedir)
+
         if page404:
             with open(page404) as f:
                 self.response_404 = f.read()
@@ -107,7 +117,7 @@ class SimpleServer:
     def log(self, msg: str):
         print(msg)
 
-    def serve(self):
+    def start(self):
         self.socket.open()
         self.log(
             f"Opening socket connection {self.socket.host}:{self.socket.port} in {self.homedir}"
@@ -157,18 +167,31 @@ class SimpleServer:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Runs a simple Python server. Not for production"
-    )
-    parser.add_argument("port", type=int, help="port to run the server on")
-    args = parser.parse_args()
-    server = SimpleServer(args.port)
-    try:
-        server.serve()
-    except:
-        os._exit(0)
-    finally:
-        server.stop()
+    port_input = input("Введите номер порта для сервера -> ")
+    # Тут проверка на то, занят ли порт
+    port_flag = port_validation(port_input, check_open=True)
+
+    if not port_flag:
+
+        port_input = DEFAULT_PORT
+        # Если порт по-умолчанию уже занят, то перебираем свободные порты
+        if not check_port_open(DEFAULT_PORT):
+            print(
+                f"Порт по умолчанию {DEFAULT_PORT} уже занят! Подбираем рандомный порт.."
+            )
+            stop_flag = False
+            current_port = None
+            while not stop_flag:
+                current_port = random.randint(49152, 65535)
+                print(f"Сгенерировали рандомный порт {current_port}")
+                stop_flag = check_port_open(current_port)
+
+            port_input = current_port
+        print(f"Выставили порт {port_input} по умолчанию")
+
+    server = WebServer(int(port_input))
+    server.start()
+    server.stop()
 
 
 if __name__ == "__main__":
