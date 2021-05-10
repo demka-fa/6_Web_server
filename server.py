@@ -2,10 +2,12 @@ import logging
 import os
 import random
 import socket
-import utils
-import yaml
 from typing import Tuple
 
+import magic
+import yaml
+
+import utils
 from validators import port_validation, check_port_open
 
 LOGGER_FILE = "./logs/server.log"
@@ -100,7 +102,7 @@ class LocaleSocket:
         data = self._connection.recv(self.buffer_size)
         return BrowserRequest(data), address[0]
 
-    def respond(self, data: bytes):
+    def send(self, data: bytes):
         assert self._socket is not None, "ServerSocket должен быть открыт для ответа"
         self._connection.send(data)
         self._connection.close()
@@ -136,16 +138,17 @@ class WebServer:
         """Приостановка работы web-сервера"""
         self.socket.close()
 
-    def router(self, path: str) -> Tuple[str, int]:
+    def router(self, path: str) -> Tuple[bytes, int, str]:
         """Роутер для ассоциации между путями и файлами"""
 
-        allowed_extensions = ["js", "html", "css"]
+        allowed_extensions = ["js", "html", "css", "png", "jpg"]
 
         router_dict = {
             "/": "index.html",
             "/index.html": "index.html",
             "/index": "index.html",
-            "/koshka": "cat.meow"
+            "/test": "cat.meow",
+            "/image": "image.jpg"
         }
 
         # Если такой маппинг действительно существует
@@ -156,37 +159,39 @@ class WebServer:
             # Если это разрешенное имя файла
             if file_name.split(".")[1] in allowed_extensions:
                 path_str = os.path.join(self.homedir, file_name)
-                with open(path_str) as f:
-                    return f.read(), 200
+                mime = magic.Magic(mime=True)
+                mime_str = mime.from_file(path_str)
+                with open(path_str, "rb") as f:
+                    return f.read(), 200, mime_str
             # Ошибка 403
             else:
-                with open(os.path.join(self.homedir, "403.html")) as f:
-                    return f.read(), 403
+                with open(os.path.join(self.homedir, "403.html"), "rb") as f:
+                    return f.read(), 403, "text/html"
 
         # Если ничего подобного нет, то 404
         else:
-            with open(os.path.join(self.homedir, "404.html")) as f:
-                return f.read(), 404
+            with open(os.path.join(self.homedir, "404.html"), "rb") as f:
+                return f.read(), 404, "text/html"
 
     def new_client_request(self):
         """"Обработка запроса клиента"""
         cli_request, ip_addr = self.socket.listen()
         path = cli_request.path
         # Получаем результат существования файла от роутера
-        body, status_code = self.router(path)
-        header = self.get_header(status_code, body)
-        self.socket.respond((header + body).encode())
+        body, status_code, mime = self.router(path)
+        header = self.get_header(status_code, body, mime)
+        self.socket.send(header.encode() + body)
         logger.info(
             f"{utils.get_date()} -> {ip_addr}, {path} {status_code} - {cli_request.method} {cli_request.user_agent}")
 
-    def get_header(self, status_code: int, message: str):
+    def get_header(self, status_code: int, body: str, mime: str):
         """Получает заголовок для ответа сервера"""
         return "\n".join(
             [
                 f"HTTP/1.1 {status_code} {self.STATUSES[status_code]}",
-                "Content-Type: text/html;charset=UTF-8",
+                f"Content-Type: {mime}",
                 f"Date: {utils.get_date()}",
-                f"Content-length: {len(message.encode('utf-8'))}",
+                f"Content-length: {len(body)}",
                 "Connection: close"
                 "Server: MyServer" "\n\n",
             ]
