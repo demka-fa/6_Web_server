@@ -3,11 +3,11 @@ import os
 import random
 import socket
 import utils
+import yaml
 from typing import Tuple
 
 from validators import port_validation, check_port_open
 
-DEFAULT_PORT = 80
 LOGGER_FILE = "./logs/server.log"
 # Настройки логирования
 logging.basicConfig(
@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 stream_handler = logging.StreamHandler()
 stream_handler.setLevel(logging.INFO)
 logger.addHandler(stream_handler)
+
+
+def read_config() -> dict:
+    """Чтение настроек из файла yaml"""
+    with open("settings.yml", "r") as file:
+        return yaml.safe_load(file)
 
 
 class BrowserRequest:
@@ -108,15 +114,15 @@ class WebServer:
         404: "File not found",
     }
 
-    def __init__(self, port: int = 80, homedir: str = "html/"):
+    def __init__(self, config: dict, port: int = 80):
         """
         Инициализирует сервер
 
         port    -- порт, на котором разворачивается
         homedir -- домашняя директория
         """
-        self.socket = LocaleSocket(port=port)
-        self.homedir = os.path.abspath(homedir)
+        self.socket = LocaleSocket(port=port, buffer_size=config["buffer_size"])
+        self.homedir = os.path.abspath(config["homedir"])
 
     def start(self):
         """Запуск web-сервера"""
@@ -173,17 +179,20 @@ class WebServer:
 
 
 def main():
+    # Чтение конфигурации сервера
+    config = read_config()
+    default_port = config["default_port"]
     port_input = input("Введите номер порта для сервера -> ")
     # Тут проверка на то, занят ли порт
     port_flag = port_validation(port_input, check_open=True)
 
     if not port_flag:
 
-        port_input = DEFAULT_PORT
+        port_input = default_port
         # Если порт по-умолчанию уже занят, то перебираем свободные порты
-        if not check_port_open(DEFAULT_PORT):
+        if not check_port_open(default_port):
             logger.info(
-                f"Порт по умолчанию {DEFAULT_PORT} уже занят! Подбираем рандомный порт.."
+                f"Порт по умолчанию {default_port} уже занят! Подбираем рандомный порт.."
             )
             stop_flag = False
             current_port = None
@@ -195,7 +204,7 @@ def main():
             port_input = current_port
         logger.info(f"Выставили порт {port_input} по умолчанию")
 
-    web_server = WebServer(port=int(port_input))
+    web_server = WebServer(config=config, port=int(port_input))
     web_server.start()
     web_server.stop()
 
