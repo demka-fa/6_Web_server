@@ -93,12 +93,12 @@ class LocaleSocket:
         self._socket.close()
         self._socket = None
 
-    def listen(self) -> BrowserRequest:
+    def listen(self) -> Tuple[BrowserRequest, str]:
         assert (self._socket is not None), "ServerSocket должен быть открыт для получения данных"
         self._socket.listen(self.max_queued_connections)
-        self._connection, _ = self._socket.accept()
+        self._connection, address = self._socket.accept()
         data = self._connection.recv(self.buffer_size)
-        return BrowserRequest(data)
+        return BrowserRequest(data), address[0]
 
     def respond(self, data: bytes):
         assert self._socket is not None, "ServerSocket должен быть открыт для ответа"
@@ -112,6 +112,7 @@ class WebServer:
     STATUSES = {
         200: "Ok",
         404: "File not found",
+        403: "Forbidden"
     }
 
     def __init__(self, config: dict, port: int = 80):
@@ -137,17 +138,30 @@ class WebServer:
 
     def router(self, path: str) -> Tuple[str, int]:
         """Роутер для ассоциации между путями и файлами"""
+
+        allowed_extensions = ["js", "html", "css"]
+
         router_dict = {
             "/": "index.html",
             "/index.html": "index.html",
             "/index": "index.html",
+            "/koshka": "cat.meow"
         }
 
         # Если такой маппинг действительно существует
         if path in router_dict:
-            path_str = os.path.join(self.homedir, router_dict[path])
-            with open(path_str) as f:
-                return f.read(), 200
+
+            # Имя файла, которое запрашиваем
+            file_name = router_dict[path]
+            # Если это разрешенное имя файла
+            if file_name.split(".")[1] in allowed_extensions:
+                path_str = os.path.join(self.homedir, file_name)
+                with open(path_str) as f:
+                    return f.read(), 200
+            # Ошибка 403
+            else:
+                with open(os.path.join(self.homedir, "403.html")) as f:
+                    return f.read(), 403
 
         # Если ничего подобного нет, то 404
         else:
@@ -156,13 +170,14 @@ class WebServer:
 
     def new_client_request(self):
         """"Обработка запроса клиента"""
-        cli_request = self.socket.listen()
+        cli_request, ip_addr = self.socket.listen()
         path = cli_request.path
         # Получаем результат существования файла от роутера
         body, status_code = self.router(path)
         header = self.get_header(status_code, body)
         self.socket.respond((header + body).encode())
-        logger.info(f"{status_code} - {cli_request.method} {path} {cli_request.user_agent}")
+        logger.info(
+            f"{utils.get_date()} -> {ip_addr}, {path} {status_code} - {cli_request.method} {cli_request.user_agent}")
 
     def get_header(self, status_code: int, message: str):
         """Получает заголовок для ответа сервера"""
