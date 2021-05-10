@@ -1,11 +1,23 @@
-# TODO Переделать логирование
-import mimetypes
+import logging
 import os
-import socket
 import random
+import socket
+from typing import Tuple
+
 from validator import port_validation, check_port_open
 
 DEFAULT_PORT = 80
+LOGGER_FILE = "./logs/server.log"
+# Настройки логирования
+logging.basicConfig(
+    format="%(asctime)-15s [%(levelname)s] %(funcName)s: %(message)s",
+    handlers=[logging.FileHandler(LOGGER_FILE)],
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
+stream_handler = logging.StreamHandler()
+stream_handler.setLevel(logging.INFO)
+logger.addHandler(stream_handler)
 
 
 class BrowserRequest:
@@ -75,9 +87,7 @@ class LocaleSocket:
         self._socket = None
 
     def listen(self) -> BrowserRequest:
-        assert (
-            self._socket is not None
-        ), "ServerSocket должен быть открыт для получения данных"
+        assert (self._socket is not None), "ServerSocket должен быть открыт для получения данных"
         self._socket.listen(self.max_queued_connections)
         self._connection, _ = self._socket.accept()
         data = self._connection.recv(self.buffer_size)
@@ -96,74 +106,66 @@ class WebServer:
         200: "Ok",
         404: "File not found",
     }
-    response_404 = "<html><h1>404 File Not Found</h1></html>"
-    log_format = "{status_code} - {method} {path} {user_agent}"
 
-    def __init__(self, port=80, homedir=os.path.curdir, page404=None):
+    def __init__(self, port: int = 80, homedir: str = "html/"):
         """
         Инициализирует сервер
 
         port    -- порт, на котором разворачивается
         homedir -- домашняя директория
-        page404 -- страница, если ресурс не найден
         """
         self.socket = LocaleSocket(port=port)
         self.homedir = os.path.abspath(homedir)
 
-        if page404:
-            with open(page404) as f:
-                self.response_404 = f.read()
-
-    def log(self, msg: str):
-        print(msg)
-
     def start(self):
+        """Запуск web-сервера"""
         self.socket.open()
-        self.log(
-            f"Opening socket connection {self.socket.host}:{self.socket.port} in {self.homedir}"
-        )
+        logger.info(f"Запустили web-сервер на порту {self.socket.host}:{self.socket.port}, директория {self.homedir}")
         while True:
-            self.serve_request()
+            self.new_client_request()
 
     def stop(self):
+        """Приостановка работы web-сервера"""
         self.socket.close()
 
-    def serve_request(self):
-        request = self.socket.listen()
-        path = request.path
-        try:
-            body, status_code = self.load_file(path)
-        except IsADirectoryError:
-            path = os.path.join(path, "index.html")
-            body, status_code = self.load_file(path)
+    def router(self, path: str) -> Tuple[str, int]:
+        """Роутер для ассоциации между путями и файлами"""
+        router_dict = {
+            "/": "index.html",
+            "/index.html": "index.html",
+            "/index": "index.html",
+        }
 
-        header = self.get_header(status_code, path)
+        # Если такой маппинг действительно существует
+        if path in router_dict:
+            path_str = os.path.join(self.homedir, router_dict[path])
+            with open(path_str) as f:
+                return f.read(), 200
+
+        # Если ничего подобного нет, то 404
+        else:
+            with open(os.path.join(self.homedir, "404.html")) as f:
+                return f.read(), 404
+
+    def new_client_request(self):
+        """"Обработка запроса клиента"""
+        cli_request = self.socket.listen()
+        path = cli_request.path
+        # Получаем результат существования файла от роутера
+        body, status_code = self.router(path)
+        header = self.get_header(status_code)
         self.socket.respond((header + body).encode())
-        self.log(
-            self.log_format.format(
-                status_code=status_code,
-                method=request.method,
-                path=request.path,
-                user_agent=request.user_agent,
-            )
-        )
+        logger.info(f"{status_code} - {cli_request.method} {path} {cli_request.user_agent}")
 
-    def get_header(self, status_code: int, path: str):
-        _, file_ext = os.path.splitext(path)
+    def get_header(self, status_code: int):
+        """Получает заголовок для ответа сервера"""
         return "\n".join(
             [
                 f"HTTP/1.1 {status_code} {self.STATUSES[status_code]}",
-                f"Content-Type: {mimetypes.types_map.get(file_ext, 'application/octet-stream')}",
-                "Server: SimplePython Server" "\n\n",
+                "Content-Type: text/html;charset=UTF-8",
+                "Server: MyServer" "\n\n",
             ]
         )
-
-    def load_file(self, path):
-        try:
-            with open(os.path.join(self.homedir, path.lstrip("/"))) as f:
-                return f.read(), 200
-        except FileNotFoundError:
-            return self.response_404, 404
 
 
 def main():
@@ -176,22 +178,22 @@ def main():
         port_input = DEFAULT_PORT
         # Если порт по-умолчанию уже занят, то перебираем свободные порты
         if not check_port_open(DEFAULT_PORT):
-            print(
+            logger.info(
                 f"Порт по умолчанию {DEFAULT_PORT} уже занят! Подбираем рандомный порт.."
             )
             stop_flag = False
             current_port = None
             while not stop_flag:
                 current_port = random.randint(49152, 65535)
-                print(f"Сгенерировали рандомный порт {current_port}")
+                logger.info(f"Сгенерировали рандомный порт {current_port}")
                 stop_flag = check_port_open(current_port)
 
             port_input = current_port
-        print(f"Выставили порт {port_input} по умолчанию")
+        logger.info(f"Выставили порт {port_input} по умолчанию")
 
-    server = WebServer(int(port_input))
-    server.start()
-    server.stop()
+    web_server = WebServer(port=int(port_input))
+    web_server.start()
+    web_server.stop()
 
 
 if __name__ == "__main__":
