@@ -2,9 +2,10 @@ import logging
 import os
 import random
 import socket
+import utils
 from typing import Tuple
 
-from validator import port_validation, check_port_open
+from validators import port_validation, check_port_open
 
 DEFAULT_PORT = 80
 LOGGER_FILE = "./logs/server.log"
@@ -153,16 +154,19 @@ class WebServer:
         path = cli_request.path
         # Получаем результат существования файла от роутера
         body, status_code = self.router(path)
-        header = self.get_header(status_code)
+        header = self.get_header(status_code, body)
         self.socket.respond((header + body).encode())
         logger.info(f"{status_code} - {cli_request.method} {path} {cli_request.user_agent}")
 
-    def get_header(self, status_code: int):
+    def get_header(self, status_code: int, message: str):
         """Получает заголовок для ответа сервера"""
         return "\n".join(
             [
                 f"HTTP/1.1 {status_code} {self.STATUSES[status_code]}",
                 "Content-Type: text/html;charset=UTF-8",
+                f"Date: {utils.get_date()}",
+                f"Content-length: {len(message.encode('utf-8'))}",
+                "Connection: close"
                 "Server: MyServer" "\n\n",
             ]
         )
